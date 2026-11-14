@@ -44,15 +44,21 @@
   </section>
 
   <div id="managerDashboard" class="manager-dashboard" hidden>
-    <header class="manager-header"><div><span class="manager-eyebrow">FREEF1 · HEADQUARTERS</span><h1>Manager overview</h1><p>Read-only snapshot · No automatic refresh</p></div><button class="btn btn-sm" id="managerLogout" type="button">Sign out</button></header>
+    <header class="manager-nav">
+      <div class="manager-brand"><span class="manager-mark" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none"><path d="M5 22L10.5 10H27L24.8 14.5H13.6L12.5 17H22.6L20.5 21.2H10.6L10.2 22H5Z" fill="currentColor"/></svg></span><strong>FreeF1</strong><span class="manager-brand-label">HEADQUARTERS</span></div>
+      <button class="btn btn-sm manager-signout" id="managerLogout" type="button">Sign out <span aria-hidden="true">↗</span></button>
+    </header>
     <main class="manager-main">
-      <p id="managerSnapshotTime" class="manager-note" role="status">Loading the snapshot…</p>
+      <section class="manager-hero" aria-labelledby="managerTitle">
+        <div><div class="manager-eyebrow"><span class="manager-pulse"></span> MANAGER · READ ONLY</div><h1 id="managerTitle">RACE <span>OVERVIEW</span></h1><p>Everything you need for the weekend, at a glance.</p></div>
+        <div class="manager-snapshot"><span class="manager-snapshot-label">SNAPSHOT</span><p id="managerSnapshotTime" role="status">Loading the snapshot…</p><small>Refresh the page for the latest data.</small></div>
+      </section>
+      <div class="manager-section-heading"><span>THE CONTROL ROOM</span><span>LIVE DATA · ON DEMAND</span></div>
       <div class="manager-grid">
-        <section class="manager-card"><h2>Audience</h2><p class="manager-note">Open pages, not unique viewers or verified playback.</p><div id="managerAudience"></div></section>
-        <section class="manager-card"><h2>Service health</h2><p class="manager-note">Checked once when this page opened.</p><div id="managerServices"></div></section>
-        <section class="manager-card"><h2>Stream sources</h2><p id="managerStreamNote" class="manager-note"></p><div id="managerStreams"></div></section>
-        <section class="manager-card"><h2>Upcoming sessions</h2><p class="manager-note">Scheduled start times, shown in your local time.</p><div id="managerSessions"></div></section>
-        <section class="manager-card"><h2>Site settings</h2><div id="managerState"></div></section>
+        <section class="manager-card manager-audience"><div class="manager-card-head"><div><span class="manager-kicker">OPEN CONNECTIONS</span><h2>Audience</h2></div><span class="manager-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M17 5a3 3 0 0 1 0 6m1 3a5 5 0 0 1 3 5v1"/></svg></span></div><p class="manager-note">Open pages, not unique viewers or verified playback.</p><div id="managerAudience"></div></section>
+        <section class="manager-card manager-health"><div class="manager-card-head"><div><span class="manager-kicker">SYSTEM CHECK</span><h2>Service health</h2></div><span class="manager-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 12h4l2-6 4 12 2-6h6"/></svg></span></div><p class="manager-note">Checked once when this page opened.</p><div id="managerServices"></div></section>
+        <section class="manager-card manager-weekend"><div class="manager-card-head"><div><span class="manager-kicker">ON THE CALENDAR</span><h2>Race weekend</h2></div><span class="manager-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 2v6m10-6v6M3 10h18"/></svg></span></div><p id="managerWeekendLabel" class="manager-note">Current or next meeting · local times</p><div id="managerSessions"></div></section>
+        <section class="manager-card manager-site"><div class="manager-card-head"><div><span class="manager-kicker">RACE CONTROL</span><h2>Site status</h2></div><span class="manager-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg></span></div><p class="manager-note">Current Headquarters settings.</p><div id="managerState"></div></section>
       </div>
     </main>
   </div>

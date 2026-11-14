@@ -196,12 +196,12 @@ is unavailable or a setting write cannot be confirmed, manager access fails
 closed; restart Headquarters after the shared store recovers.
 
 A manager sign-in loads one on-demand snapshot, with no polling. It checks the
-configured services (and the main/backup defaults if missing), requests the
-main and backup audience aggregates, and, in Auto-Streams mode, requests the
-main backend's discovery snapshot. If that discovery cache is due for refresh,
-the backend may also contact the upstream providers within the existing
-race-weekend discovery rules. Requests use bandwidth; concurrent snapshots are coalesced, and refreshes are
-limited to six per minute per IP. Each completed page refresh requests a fresh snapshot. Audience numbers count open
-pages, not unique people or verified playback. Manual source listings show
-configured enabled sources, not guaranteed live streams. Upcoming sessions use
-the bundled 2026 schedule; service and counter failures are shown as unavailable.
+configured services (and the main/backup defaults if missing) and requests the
+main and backup audience aggregates. It does not fetch or expose stream-source
+lists. Requests use bandwidth; concurrent snapshots are coalesced, and refreshes
+are limited to six per minute per IP. Each completed page refresh requests a
+fresh snapshot. Audience numbers count open pages, not unique people or verified
+playback. Only the current or next race weekend from the bundled 2026 schedule
+is shown. Service and counter failures are displayed as unavailable. Public
+stream information remains accessible on the public site and APIs; this is a
+restriction on the manager dashboard, not a new site-wide access control.

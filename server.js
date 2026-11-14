@@ -1574,31 +1574,27 @@ async function collectManagerSnapshot() {
     { name: 'Backup backend', type: 'backend', url: 'https://f1admin-backup.onrender.com/healthz' }
   ];
   const targets = [...HQ_TARGETS, ...defaultTargets.filter(fallback => !HQ_TARGETS.some(target => new URL(target.url).origin === new URL(fallback.url).origin))];
+  const pageIds = new Set(CONTROLLABLE_PAGES.map(page => page.id).concat(['home', 'driver', 'team', 'private-cockpit', 'replay-cockpit']));
   const counter = async site => {
     try {
       const response = await fetch(`https://freef1-viewer-counter.calvinbotha1julie.workers.dev/admin/peaks?site=${site}`, { signal: AbortSignal.timeout(10000), redirect: 'error' });
       if (!response.ok) throw Error('Counter unavailable');
       const data = await response.json();
-      return { site, current: data.current && typeof data.current === 'object' ? data.current : null };
+      const source = data.current;
+      if (!source || typeof source !== 'object') return { site, current: null };
+      const count = value => Number.isFinite(Number(value)) ? Math.max(0, Math.floor(Number(value))) : 0;
+      const pages = {};
+      for (const [key, value] of Object.entries(source.pages || {})) if (pageIds.has(key)) pages[key] = count(value);
+      return { site, current: { total: count(source.total), unclassified: count(source.unclassified), pages } };
     } catch { return { site, current: null }; }
   };
-  const discovered = async () => {
-    if (!state.sources.autoStreams) return null;
-    try {
-      const response = await fetch('https://f1admin.onrender.com/api/stream/auto', { signal: AbortSignal.timeout(12000), redirect: 'error', headers: { accept: 'application/json' } });
-      if (!response.ok) throw Error('Auto discovery unavailable');
-      const data = await response.json();
-      return { updatedAt: data.updatedAt || null, window: data.window || null, streams: (Array.isArray(data.streams) ? data.streams : []).slice(0, 200).map(row => ({ label: String(row.label || '').slice(0, 100), provider: String(row.provider || '').slice(0, 30), tag: String(row.tag || '').slice(0, 40) })) };
-    } catch { return null; }
-  };
-  const [services, mainAudience, backupAudience, automatic] = await Promise.all([
-    require('./headquarters').checkTargets(targets), counter('main'), counter('backup'), discovered()
+  const [services, mainAudience, backupAudience] = await Promise.all([
+    require('./headquarters').checkTargets(targets), counter('main'), counter('backup')
   ]);
-  const disabled = new Set([...state.sources.disabled, ...state.sources.removed]);
-  const manual = adminSourceList().filter(row => !disabled.has(row.id) && !(state.sources.relaysDisabled && row.stripped && row.id !== 'sky-uk')).map(row => ({ label: row.label, provider: row.provider || 'custom' }));
   const now = Date.now();
-  const sessions = require('./bot/schedule-2026.json').flatMap(event => (event.sessions || []).map(session => ({ event: event.name, name: session.name, start: session.ts }))).filter(session => Number.isFinite(session.start) && session.start >= now).sort((a,b) => a.start - b.start).slice(0, 8);
-  return { capturedAt: now, audience: [mainAudience, backupAudience], services: services.map(({name,type,online,status,checkedAt}) => ({name,type,online,status,checkedAt})), automatic, manual: state.sources.autoStreams ? [] : manual, autoStreams: state.sources.autoStreams === true, failover: Boolean(state.failover.active), maintenance: Boolean(state.maintenance.active), streamWindow: Boolean(state.streamWindow.active), streamOverride: Boolean(state.streamOverride.active && state.streamOverride.url), relaysDisabled: Boolean(state.sources.relaysDisabled), upcoming: sessions };
+  const weekend = require('./manager-weekend').managerWeekend(require('./bot/schedule-2026.json'), now);
+  return { capturedAt: now, audience: [mainAudience, backupAudience], services: services.map(({name,type,online,status,checkedAt}) => ({name,type,online,status,checkedAt})), failover: Boolean(state.failover.active), maintenance: Boolean(state.maintenance.active), streamWindow: Boolean(state.streamWindow.active), weekend };
+
 }
 app.get('/admin/api/manager/snapshot', adminSameOrigin, async (req, res) => {
   await managerReady;

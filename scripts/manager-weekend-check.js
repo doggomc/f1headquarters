@@ -1,0 +1,12 @@
+'use strict';
+const assert = require('node:assert/strict');
+const { managerWeekend } = require('../manager-weekend');
+const h = 3600000;
+const event = (round,start) => ({round,name:`Round ${round}`,sessions:[{name:'Practice',ts:start},{name:'Race',ts:start + 48*h}]});
+const fixtures = [event(1,1000),event(2,1000+7*24*h)];
+assert.equal(managerWeekend(fixtures,0).round,1,'before first event choose upcoming');
+assert.equal(managerWeekend(fixtures,1000+24*h).round,1,'during weekend keep all of the current meeting');
+assert.deepEqual(managerWeekend(fixtures,1000+24*h).sessions.map(s=>s.name),['Practice','Race']);
+assert.equal(managerWeekend(fixtures,1000+53*h).round,2,'after race switch to next meeting');
+assert.equal(managerWeekend(fixtures,1000+20*24*h),null,'no fabricated weekend after schedule ends');
+console.log('Manager schedule: one current or next meeting, including race boundary, passed');

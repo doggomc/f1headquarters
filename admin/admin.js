@@ -108,11 +108,11 @@ function showDashboard() {
   setStatusLine('loginError', '');
 }
 
-function managerRow(container, label, value, detail = '') {
+function managerRow(container, label, value, detail = '', tone = '') {
   const row = document.createElement('div'); row.className = 'manager-row';
   const text = document.createElement('div'); const title = document.createElement('strong'); title.textContent = label; text.append(title);
   if (detail) { const small = document.createElement('small'); small.textContent = detail; text.append(small); }
-  const result = document.createElement('span'); result.textContent = value; row.append(text, result); container.append(row);
+  const result = document.createElement('span'); result.className = tone ? `manager-value is-${tone}` : 'manager-value'; result.textContent = value; row.append(text, result); container.append(row);
 }
 async function showManager() {
   $('authScreen').hidden = true; $('dashboard').hidden = true; $('managerDashboard').hidden = false;
@@ -120,25 +120,22 @@ async function showManager() {
   $('managerSnapshotTime').textContent = 'Loading the snapshot…';
   try {
     const data = await api('/manager/snapshot');
-    for (const id of ['managerAudience','managerServices','managerStreams','managerSessions','managerState']) $(id).replaceChildren();
-    $('managerSnapshotTime').textContent = `Snapshot taken ${new Date(data.capturedAt).toLocaleString()}. Sign in again for a new snapshot.`;
+    for (const id of ['managerAudience','managerServices','managerSessions','managerState']) $(id).replaceChildren();
+    $('managerSnapshotTime').textContent = `Updated ${new Date(data.capturedAt).toLocaleString()}`;
     for (const site of data.audience || []) {
       const current = site.current;
       managerRow($('managerAudience'), site.site === 'backup' ? 'Backup site' : 'Main site', current ? `${Number(current.total || 0).toLocaleString()} open` : 'Unavailable');
-      if (current?.pages) for (const [name,count] of Object.entries(current.pages)) managerRow($('managerAudience'), name.replace(/-/g, ' '), `${Number(count || 0).toLocaleString()} open`);
+      if (current?.pages) for (const [name,count] of Object.entries(current.pages)) managerRow($('managerAudience'), AUDIENCE_PAGE_NAMES[name] || name.replace(/-/g, ' '), `${Number(count || 0).toLocaleString()} open`);
+      if (current?.unclassified) managerRow($('managerAudience'), 'Unclassified', `${Number(current.unclassified).toLocaleString()} open`);
     }
-    for (const service of data.services || []) managerRow($('managerServices'), service.name, service.online ? 'Online' : 'Unavailable', `Checked ${new Date(service.checkedAt).toLocaleTimeString()}${service.status ? ` · HTTP ${service.status}` : ''}`);
-    const items = data.autoStreams ? data.automatic?.streams : data.manual;
-    $('managerStreamNote').textContent = data.autoStreams ? (data.automatic ? `${data.automatic.window?.active ? 'Automatic discovery snapshot' : 'Automatic discovery is paused or outside its window'}${data.automatic.updatedAt ? ` · updated ${new Date(data.automatic.updatedAt).toLocaleString()}` : ''}. Listings do not guarantee playback.` : 'Automatic discovery is unavailable.') : 'Enabled manual sources; availability and playback are not verified.';
-    for (const item of items || []) managerRow($('managerStreams'), item.label || 'Unnamed source', item.tag || item.provider || 'Enabled');
-    if (Array.isArray(items) && !items.length) managerRow($('managerStreams'), 'No sources in this snapshot', '—');
-    for (const session of data.upcoming || []) managerRow($('managerSessions'), session.name, new Date(session.start).toLocaleString(), session.event);
-    if (!(data.upcoming || []).length) managerRow($('managerSessions'), 'No further sessions in the bundled schedule', '—');
+    for (const service of data.services || []) managerRow($('managerServices'), service.name, service.online ? 'Online' : 'Unavailable', `Checked ${new Date(service.checkedAt).toLocaleTimeString()}${service.status ? ` · HTTP ${service.status}` : ''}`, service.online ? 'good' : 'bad');
+    const weekend = data.weekend;
+    $('managerWeekendLabel').textContent = weekend ? `ROUND ${weekend.round} · ${weekend.name} · Local times` : 'Current or next meeting · local times';
+    for (const session of weekend?.sessions || []) managerRow($('managerSessions'), session.name, new Date(session.start).toLocaleString());
+    if (!weekend?.sessions?.length) managerRow($('managerSessions'), 'No further sessions in the bundled schedule', '—');
     managerRow($('managerState'), 'Failover', data.failover ? 'Backup active' : 'Main active');
     managerRow($('managerState'), 'Maintenance', data.maintenance ? 'Enabled' : 'Off');
     managerRow($('managerState'), 'Force live', data.streamWindow ? 'Enabled' : 'Off');
-    managerRow($('managerState'), 'Stream override', data.streamOverride ? 'Active' : 'Off');
-    managerRow($('managerState'), 'Relays', data.relaysDisabled ? 'Disabled' : 'Enabled');
   } catch (error) { $('managerSnapshotTime').textContent = `Snapshot unavailable: ${error.message}`; }
 }
 $('managerLogout')?.addEventListener('click', async () => {
