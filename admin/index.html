@@ -43,6 +43,20 @@
     </div>
   </section>
 
+  <div id="managerDashboard" class="manager-dashboard" hidden>
+    <header class="manager-header"><div><span class="manager-eyebrow">FREEF1 · HEADQUARTERS</span><h1>Manager overview</h1><p>Read-only snapshot · No automatic refresh</p></div><button class="btn btn-sm" id="managerLogout" type="button">Sign out</button></header>
+    <main class="manager-main">
+      <p id="managerSnapshotTime" class="manager-note" role="status">Loading the snapshot…</p>
+      <div class="manager-grid">
+        <section class="manager-card"><h2>Audience</h2><p class="manager-note">Open pages, not unique viewers or verified playback.</p><div id="managerAudience"></div></section>
+        <section class="manager-card"><h2>Service health</h2><p class="manager-note">Checked once when this page opened.</p><div id="managerServices"></div></section>
+        <section class="manager-card"><h2>Stream sources</h2><p id="managerStreamNote" class="manager-note"></p><div id="managerStreams"></div></section>
+        <section class="manager-card"><h2>Upcoming sessions</h2><p class="manager-note">Scheduled start times, shown in your local time.</p><div id="managerSessions"></div></section>
+        <section class="manager-card"><h2>Site settings</h2><div id="managerState"></div></section>
+      </div>
+    </main>
+  </div>
+
   <div id="dashboard" hidden>
     <header class="nav" id="adminNav">
       <div class="wrap nav-inner">
@@ -238,6 +252,11 @@
             <p class="section-note">Checks run only when requested. A response does not guarantee playback or full service functionality.</p>
             <p class="status-line" id="headquartersMessage" role="status"></p>
             <p class="status-line" id="headquartersDelivery" role="status">No backend updates sent yet.</p>
+            <div class="manager-access" id="managerAccess" hidden>
+              <div><strong>Manager access</strong><small>Read-only dashboard. Manager / Manager is publicly guessable.</small></div>
+              <button class="btn btn-sm" id="managerAccessToggle" type="button" aria-pressed="false">Loading…</button>
+              <p id="managerAccessMessage" class="status-line" role="status"></p>
+            </div>
             <button class="btn btn-sm" type="button" id="retryHeadquartersSync">Retry backend updates</button>
             <div id="headquartersTargets" class="health-list"></div>
             <div class="health-divider"></div>

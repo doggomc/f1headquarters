@@ -31,6 +31,7 @@ const PORT = Number(process.env.PORT) || 3000;
 const CONTROL_ROLE = process.env.CONTROL_ROLE || 'standalone';
 if (!['standalone', 'headquarters', 'replica'].includes(CONTROL_ROLE)) throw new Error('Invalid CONTROL_ROLE');
 const HQ_CONTROL_KEY = 'freef1:headquarters:control:v1';
+const HQ_MANAGER_KEY = 'freef1:headquarters:manager:v1';
 const HQ_TARGETS = CONTROL_ROLE === 'headquarters' ? require('./headquarters').readTargets(process.env.HQ_TARGETS) : [];
 const HQ_PUSH_TARGETS = CONTROL_ROLE === 'headquarters' ? require('./headquarters').readPushTargets(process.env.HQ_PUSH_TARGETS, process.env.NODE_ENV === 'test') : [];
 const HQ_PUSH_SECRET = String(process.env.HQ_PUSH_SECRET || '');
@@ -892,6 +893,26 @@ const sessionMiddleware = cookieSession({
 app.use('/admin/api', sessionMiddleware);
 
 let stateReady = CONTROL_ROLE === 'standalone' ? loadSiteState() : loadSharedState();
+// A separate durable flag keeps manager sessions read-only and revocable without
+// publishing any credentials or manager settings to visitor-facing replicas.
+let managerSettings = null;
+async function loadManagerSettings() {
+  if (CONTROL_ROLE !== 'headquarters') return;
+  try {
+    let reply = await sharedStoreRequest(['GET', HQ_MANAGER_KEY]);
+    if (!reply?.result) {
+      await sharedStoreRequest(['SET', HQ_MANAGER_KEY, JSON.stringify({ enabled: true, generation: crypto.randomBytes(16).toString('hex') }), 'NX']);
+      reply = await sharedStoreRequest(['GET', HQ_MANAGER_KEY]);
+    }
+    const saved = parseRedisJson(reply?.result);
+    if (!saved || typeof saved.enabled !== 'boolean' || !/^[a-f0-9]{32}$/.test(saved.generation || '')) throw Error('Invalid manager access setting');
+    managerSettings = saved;
+  } catch (_) { managerSettings = null; }
+}
+const managerReady = loadManagerSettings();
+function isManager(req) {
+  return CONTROL_ROLE === 'headquarters' && managerSettings?.enabled === true && req.session?.role === 'manager' && req.session?.managerGeneration === managerSettings.generation;
+}
 // Headquarters never exposes an unconfirmed in-flight mutation via public APIs.
 app.use((req, _res, next) => {
   if (CONTROL_ROLE !== 'headquarters' || req.path.startsWith('/admin') || req.path === '/healthz') return next();
@@ -1517,23 +1538,87 @@ function recordLoginFailure(ip) {
   loginAttempts.set(ip, attempt);
 }
 
-app.post('/admin/api/login', adminSameOrigin, checkLoginRate, (req, res) => {
+app.post('/admin/api/login', adminSameOrigin, checkLoginRate, async (req, res) => {
   const isFormPost = !req.is('application/json') && req.accepts(['html', 'json']) === 'html';
   const username = safeText(req.body?.username, 100);
   const password = String(req.body?.password || '').slice(0, 500);
-  if (!isSafeEqual(username, ADMIN_USER) || !isSafeEqual(password, ADMIN_PASS)) {
+  const owner = isSafeEqual(username, ADMIN_USER) && isSafeEqual(password, ADMIN_PASS);
+  await managerReady;
+  const manager = !owner && CONTROL_ROLE === 'headquarters' && managerSettings?.enabled === true && isSafeEqual(username, 'Manager') && isSafeEqual(password, 'Manager');
+  if (!owner && !manager) {
     recordLoginFailure(req.loginIp);
     if (isFormPost) return res.redirect(303, '/admin/?auth=failed');
     return res.status(401).json({ success: false, error: 'Invalid username or password.' });
   }
   loginAttempts.delete(req.loginIp);
-  req.session = { isAdmin: true, loginAt: Date.now() };
+  req.session = manager ? { role: 'manager', managerGeneration: managerSettings.generation, loginAt: Date.now() } : { isAdmin: true, loginAt: Date.now() };
   if (isFormPost) return res.redirect(303, '/admin/');
-  res.json({ success: true });
+  res.json({ success: true, role: manager ? 'manager' : 'owner' });
 });
 
-app.get('/admin/api/status', (req, res) => {
-  res.json({ authenticated: Boolean(req.session?.isAdmin), loginAt: req.session?.loginAt || null });
+app.get('/admin/api/status', async (req, res) => {
+  await managerReady;
+  const manager = isManager(req);
+  res.json({ authenticated: Boolean(req.session?.isAdmin || manager), role: req.session?.isAdmin ? 'owner' : manager ? 'manager' : null, loginAt: req.session?.loginAt || null });
+});
+
+// The manager receives only this allowlisted aggregate; all existing admin APIs
+// below continue to require an owner session and reject manager cookies.
+let managerSnapshotCache = null;
+let managerSnapshotPending = null;
+async function collectManagerSnapshot() {
+  const defaultTargets = [
+    { name: 'Main frontend', type: 'frontend', url: 'https://freef1-live.vercel.app/' },
+    { name: 'Main backend', type: 'backend', url: 'https://f1admin.onrender.com/healthz' },
+    { name: 'Backup frontend', type: 'frontend', url: 'https://freef1-backup.vercel.app/' },
+    { name: 'Backup backend', type: 'backend', url: 'https://f1admin-backup.onrender.com/healthz' }
+  ];
+  const targets = [...HQ_TARGETS, ...defaultTargets.filter(fallback => !HQ_TARGETS.some(target => new URL(target.url).origin === new URL(fallback.url).origin))];
+  const counter = async site => {
+    try {
+      const response = await fetch(`https://freef1-viewer-counter.calvinbotha1julie.workers.dev/admin/peaks?site=${site}`, { signal: AbortSignal.timeout(10000), redirect: 'error' });
+      if (!response.ok) throw Error('Counter unavailable');
+      const data = await response.json();
+      return { site, current: data.current && typeof data.current === 'object' ? data.current : null };
+    } catch { return { site, current: null }; }
+  };
+  const discovered = async () => {
+    if (!state.sources.autoStreams) return null;
+    try {
+      const response = await fetch('https://f1admin.onrender.com/api/stream/auto', { signal: AbortSignal.timeout(12000), redirect: 'error', headers: { accept: 'application/json' } });
+      if (!response.ok) throw Error('Auto discovery unavailable');
+      const data = await response.json();
+      return { updatedAt: data.updatedAt || null, window: data.window || null, streams: (Array.isArray(data.streams) ? data.streams : []).slice(0, 200).map(row => ({ label: String(row.label || '').slice(0, 100), provider: String(row.provider || '').slice(0, 30), tag: String(row.tag || '').slice(0, 40) })) };
+    } catch { return null; }
+  };
+  const [services, mainAudience, backupAudience, automatic] = await Promise.all([
+    require('./headquarters').checkTargets(targets), counter('main'), counter('backup'), discovered()
+  ]);
+  const disabled = new Set([...state.sources.disabled, ...state.sources.removed]);
+  const manual = adminSourceList().filter(row => !disabled.has(row.id) && !(state.sources.relaysDisabled && row.stripped && row.id !== 'sky-uk')).map(row => ({ label: row.label, provider: row.provider || 'custom' }));
+  const now = Date.now();
+  const sessions = require('./bot/schedule-2026.json').flatMap(event => (event.sessions || []).map(session => ({ event: event.name, name: session.name, start: session.ts }))).filter(session => Number.isFinite(session.start) && session.start >= now).sort((a,b) => a.start - b.start).slice(0, 8);
+  return { capturedAt: now, audience: [mainAudience, backupAudience], services: services.map(({name,type,online,status,checkedAt}) => ({name,type,online,status,checkedAt})), automatic, manual: state.sources.autoStreams ? [] : manual, autoStreams: state.sources.autoStreams === true, failover: Boolean(state.failover.active), maintenance: Boolean(state.maintenance.active), streamWindow: Boolean(state.streamWindow.active), streamOverride: Boolean(state.streamOverride.active && state.streamOverride.url), relaysDisabled: Boolean(state.sources.relaysDisabled), upcoming: sessions };
+}
+app.get('/admin/api/manager/snapshot', adminSameOrigin, async (req, res) => {
+  await managerReady;
+  if (!isManager(req)) return res.status(401).json({ error: 'Manager access is unavailable.' });
+  await stateReady;
+  try {
+    // Coalesce concurrent requests and reuse a snapshot briefly to bound costs,
+    // including if the publicly guessable credentials are abused.
+    if (!managerSnapshotCache || Date.now() - managerSnapshotCache.capturedAt > 30000) {
+      if (!managerSnapshotPending) managerSnapshotPending = collectManagerSnapshot().then(value => { managerSnapshotCache = value; return value; }).finally(() => { managerSnapshotPending = null; });
+      await managerSnapshotPending;
+    }
+    if (!isManager(req)) return res.status(401).json({ error: 'Manager access is unavailable.' });
+    setNoStore(res);
+    return res.json(managerSnapshotCache);
+  } catch { return res.status(503).json({ error: 'Snapshot unavailable.' }); }
+});
+app.post('/admin/api/manager/logout', adminSameOrigin, (req, res) => {
+  if (!isManager(req)) return res.status(401).json({ error: 'Not authenticated' });
+  req.session = null; res.json({ success: true });
 });
 
 function requireAdmin(req, res, next) {
@@ -1587,6 +1672,32 @@ app.use('/admin/api', (req, res, next) => {
 });
 
 // Fetch public aggregate statistics on demand for an authenticated dashboard.
+app.get('/admin/api/manager-access', async (_req, res) => {
+  if (CONTROL_ROLE !== 'headquarters') return res.status(404).end();
+  await managerReady;
+  res.json({ available: Boolean(managerSettings), enabled: managerSettings?.enabled === true });
+});
+app.post('/admin/api/manager-access', async (req, res) => {
+  if (CONTROL_ROLE !== 'headquarters') return res.status(404).end();
+  if (typeof req.body?.enabled !== 'boolean') return res.status(400).json({ error: 'enabled must be true or false' });
+  await managerReady;
+  if (!managerSettings) return res.status(503).json({ error: 'Manager access settings unavailable; no changes made.' });
+  const next = { enabled: req.body.enabled, generation: crypto.randomBytes(16).toString('hex') };
+  try {
+    const result = await sharedStoreRequest(['SET', HQ_MANAGER_KEY, JSON.stringify(next)]);
+    if (result?.result !== 'OK') throw Error('Store did not acknowledge update');
+    managerSettings = next;
+    managerSnapshotCache = null;
+    res.json({ success: true, enabled: next.enabled });
+  } catch {
+    // The write may have reached storage despite a lost response. Fail closed
+    // until Headquarters reloads the authoritative setting after restart.
+    managerSettings = null;
+    managerSnapshotCache = null;
+    res.status(503).json({ error: 'Could not confirm the setting; manager access is temporarily closed. Restart Headquarters after storage recovers.' });
+  }
+});
+
 app.get('/admin/api/viewer-peaks', async (_req, res) => {
   try {
     const results = await Promise.all(['main', 'backup'].map(async site => {
@@ -1665,7 +1776,8 @@ async function buildAdminLinkReport({ fast = false } = {}) {
 app.get('/admin/api/config', async (_req, res) => {
   await stateReady;
   const linkReport = await buildAdminLinkReport({ fast: true });
-  res.json({ controlRole: CONTROL_ROLE, ...publicConfig(), sources: adminSourcesState(), pageList: CONTROLLABLE_PAGES, sourceList: adminSourceList(), linkReport, storage: storageSummary(), fourK: streamResolver.summary() });
+  await managerReady;
+  res.json({ managerAccess: CONTROL_ROLE === 'headquarters' ? { available: Boolean(managerSettings), enabled: managerSettings?.enabled === true } : null, controlRole: CONTROL_ROLE, ...publicConfig(), sources: adminSourcesState(), pageList: CONTROLLABLE_PAGES, sourceList: adminSourceList(), linkReport, storage: storageSummary(), fourK: streamResolver.summary() });
 });
 
 app.post('/admin/api/failover', async (req, res) => {

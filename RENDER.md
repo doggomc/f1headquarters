@@ -182,3 +182,26 @@ npm run check:security
 `SITE_DIR` if you keep the frontend checkout elsewhere. `npm run check:discord`
 checks that the retained bot commands are still registered and the removed
 voice-relay feature does not return.
+
+### Headquarters read-only manager access
+
+Headquarters supports the explicitly requested `Manager` / `Manager` login. This
+is a publicly guessable password: anyone who knows it can see the aggregate
+manager dashboard while access is enabled. It is not an owner login and cannot
+use the control or ticket APIs. In the owner dashboard's Headquarters panel,
+**Disable manager access** revokes existing manager sessions; re-enabling it
+requires a new manager login. The access setting is persisted in Headquarters'
+shared Upstash store and defaults to enabled on first initialization. If storage
+is unavailable or a setting write cannot be confirmed, manager access fails
+closed; restart Headquarters after the shared store recovers.
+
+A manager sign-in loads one on-demand snapshot, with no polling. It checks the
+configured services (and the main/backup defaults if missing), requests the
+main and backup audience aggregates, and, in Auto-Streams mode, requests the
+main backend's discovery snapshot. If that discovery cache is due for refresh,
+the backend may also contact the upstream providers within the existing
+race-weekend discovery rules. Requests use bandwidth; concurrent snapshots are
+coalesced and snapshots are reused for 30 seconds. Audience numbers count open
+pages, not unique people or verified playback. Manual source listings show
+configured enabled sources, not guaranteed live streams. Upcoming sessions use
+the bundled 2026 schedule; service and counter failures are shown as unavailable.

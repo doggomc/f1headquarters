@@ -93,6 +93,7 @@ async function api(path, options = {}) {
 
 function showAuth(message = '') {
   $('dashboard').hidden = true;
+  $('managerDashboard').hidden = true;
   $('authScreen').hidden = false;
   setStatusLine('loginError', message, message ? 'error' : '');
   const reducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -102,9 +103,65 @@ function showAuth(message = '') {
 
 function showDashboard() {
   $('authScreen').hidden = true;
+  $('managerDashboard').hidden = true;
   $('dashboard').hidden = false;
   setStatusLine('loginError', '');
 }
+
+function managerRow(container, label, value, detail = '') {
+  const row = document.createElement('div'); row.className = 'manager-row';
+  const text = document.createElement('div'); const title = document.createElement('strong'); title.textContent = label; text.append(title);
+  if (detail) { const small = document.createElement('small'); small.textContent = detail; text.append(small); }
+  const result = document.createElement('span'); result.textContent = value; row.append(text, result); container.append(row);
+}
+async function showManager() {
+  $('authScreen').hidden = true; $('dashboard').hidden = true; $('managerDashboard').hidden = false;
+  document.title = 'Manager overview — FreeF1';
+  $('managerSnapshotTime').textContent = 'Loading the snapshot…';
+  try {
+    const data = await api('/manager/snapshot');
+    for (const id of ['managerAudience','managerServices','managerStreams','managerSessions','managerState']) $(id).replaceChildren();
+    $('managerSnapshotTime').textContent = `Snapshot taken ${new Date(data.capturedAt).toLocaleString()}. Sign in again for a new snapshot.`;
+    for (const site of data.audience || []) {
+      const current = site.current;
+      managerRow($('managerAudience'), site.site === 'backup' ? 'Backup site' : 'Main site', current ? `${Number(current.total || 0).toLocaleString()} open` : 'Unavailable');
+      if (current?.pages) for (const [name,count] of Object.entries(current.pages)) managerRow($('managerAudience'), name.replace(/-/g, ' '), `${Number(count || 0).toLocaleString()} open`);
+    }
+    for (const service of data.services || []) managerRow($('managerServices'), service.name, service.online ? 'Online' : 'Unavailable', `Checked ${new Date(service.checkedAt).toLocaleTimeString()}${service.status ? ` · HTTP ${service.status}` : ''}`);
+    const items = data.autoStreams ? data.automatic?.streams : data.manual;
+    $('managerStreamNote').textContent = data.autoStreams ? (data.automatic ? `${data.automatic.window?.active ? 'Automatic discovery snapshot' : 'Automatic discovery is paused or outside its window'}${data.automatic.updatedAt ? ` · updated ${new Date(data.automatic.updatedAt).toLocaleString()}` : ''}. Listings do not guarantee playback.` : 'Automatic discovery is unavailable.') : 'Enabled manual sources; availability and playback are not verified.';
+    for (const item of items || []) managerRow($('managerStreams'), item.label || 'Unnamed source', item.tag || item.provider || 'Enabled');
+    if (Array.isArray(items) && !items.length) managerRow($('managerStreams'), 'No sources in this snapshot', '—');
+    for (const session of data.upcoming || []) managerRow($('managerSessions'), session.name, new Date(session.start).toLocaleString(), session.event);
+    if (!(data.upcoming || []).length) managerRow($('managerSessions'), 'No further sessions in the bundled schedule', '—');
+    managerRow($('managerState'), 'Failover', data.failover ? 'Backup active' : 'Main active');
+    managerRow($('managerState'), 'Maintenance', data.maintenance ? 'Enabled' : 'Off');
+    managerRow($('managerState'), 'Force live', data.streamWindow ? 'Enabled' : 'Off');
+    managerRow($('managerState'), 'Stream override', data.streamOverride ? 'Active' : 'Off');
+    managerRow($('managerState'), 'Relays', data.relaysDisabled ? 'Disabled' : 'Enabled');
+  } catch (error) { $('managerSnapshotTime').textContent = `Snapshot unavailable: ${error.message}`; }
+}
+$('managerLogout')?.addEventListener('click', async () => {
+  try { await api('/manager/logout', { method: 'POST' }); } catch (_) {}
+  showAuth();
+});
+let managerAccessEnabled = false;
+function renderManagerAccess(access) {
+  const box = $('managerAccess'); if (!box) return;
+  box.hidden = !access;
+  if (!access) return;
+  managerAccessEnabled = access.enabled === true;
+  const button = $('managerAccessToggle');
+  button.disabled = !access.available;
+  button.setAttribute('aria-pressed', String(managerAccessEnabled));
+  button.textContent = !access.available ? 'Unavailable' : managerAccessEnabled ? 'Disable manager access' : 'Enable manager access';
+  $('managerAccessMessage').textContent = !access.available ? 'Shared access settings unavailable. Manager login is closed.' : managerAccessEnabled ? 'Manager login enabled.' : 'Manager login disabled; existing manager sessions are revoked.';
+}
+$('managerAccessToggle')?.addEventListener('click', async () => {
+  const button = $('managerAccessToggle'); button.disabled = true;
+  try { const result = await api('/manager-access', { method: 'POST', body: JSON.stringify({ enabled: !managerAccessEnabled }) }); renderManagerAccess({ available: true, enabled: result.enabled }); }
+  catch (error) { renderManagerAccess({ available: false, enabled: false }); setStatusLine('managerAccessMessage', error.message, 'error'); }
+});
 
 function safeDate(value) {
   const time = Number(value);
@@ -801,11 +858,13 @@ $('refreshHeadquarters')?.addEventListener('click', () => loadHeadquarters().cat
 
 async function loadConfig({ silent = false } = {}) {
   const payload = await api('/config');
+  renderManagerAccess(payload.controlRole === 'headquarters' ? payload.managerAccess : null);
   if (payload.controlRole === 'replica') {
     const subtitle = document.querySelector('.page-sub');
     if (subtitle) subtitle.textContent = 'Changes are saved through Headquarters and sent to the configured backends.';
   }
   if (payload.controlRole === 'headquarters') {
+    $('headquartersSection').hidden = false;
     document.title = 'Headquarters — FreeF1';
     document.querySelectorAll('.brand-tag').forEach(el => { el.textContent = 'Headquarters'; });
     const subtitle = document.querySelector('.page-sub');
@@ -893,7 +952,7 @@ $('loginForm').addEventListener('submit', async (event) => {
   const button = $('loginBtn');
   button.disabled = true;
   try {
-    await api('/login', {
+    const result = await api('/login', {
       method: 'POST',
       body: JSON.stringify({
         username: $('usernameInput').value.trim(),
@@ -901,6 +960,7 @@ $('loginForm').addEventListener('submit', async (event) => {
       })
     });
     $('passwordInput').value = '';
+    if (result.role === 'manager') { await showManager(); return; }
     showDashboard();
     await loadConfig();
     showToast('Signed in to Race Control.');
@@ -1171,7 +1231,9 @@ async function initialize() {
   }
   try {
     const status = await api('/status');
-    if (status.authenticated) {
+    if (status.authenticated && status.role === 'manager') {
+      await showManager();
+    } else if (status.authenticated) {
       showDashboard();
       await loadConfig();
     } else {
