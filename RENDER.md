@@ -200,8 +200,8 @@ configured services (and the main/backup defaults if missing), requests the
 main and backup audience aggregates, and, in Auto-Streams mode, requests the
 main backend's discovery snapshot. If that discovery cache is due for refresh,
 the backend may also contact the upstream providers within the existing
-race-weekend discovery rules. Requests use bandwidth; concurrent snapshots are
-coalesced and snapshots are reused for 30 seconds. Audience numbers count open
+race-weekend discovery rules. Requests use bandwidth; concurrent snapshots are coalesced, and refreshes are
+limited to six per minute per IP. Each completed page refresh requests a fresh snapshot. Audience numbers count open
 pages, not unique people or verified playback. Manual source listings show
 configured enabled sources, not guaranteed live streams. Upcoming sessions use
 the bundled 2026 schedule; service and counter failures are shown as unavailable.

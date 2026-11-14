@@ -1449,8 +1449,8 @@ button {
 .manager-header p, .manager-note { margin: 5px 0 16px; color: #a2a5ae; font-size: 13px; line-height: 1.5; }
 .manager-eyebrow { color: #f87168; font-size: 11px; font-weight: 700; letter-spacing: .12em; }
 .manager-main { padding-top: 22px; }
-.manager-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; align-items: start; }
-.manager-card { padding: 22px; border: 1px solid #ffffff18; border-radius: 16px; background: #17181c; min-width: 0; }
+.manager-grid { columns: 2; column-gap: 16px; }
+.manager-card { display: inline-block; width: 100%; margin: 0 0 16px; break-inside: avoid; padding: 22px; border: 1px solid #ffffff18; border-radius: 16px; background: #17181c; min-width: 0; }
 .manager-card h2 { margin: 0 0 8px; font-size: 18px; }
 .manager-row { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 11px 0; border-top: 1px solid #ffffff0e; font-size: 13px; }
 .manager-row div { min-width: 0; overflow-wrap: anywhere; }
@@ -1459,4 +1459,4 @@ button {
 .manager-access { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin: 16px 0; padding: 14px; border: 1px solid #ffffff18; border-radius: 12px; }
 .manager-access small { display: block; color: #a9abb4; margin-top: 4px; }
 .manager-access .status-line { flex-basis: 100%; margin: 0; }
-@media (max-width: 700px) { .manager-dashboard { padding: 24px 16px; } .manager-grid { grid-template-columns: 1fr; } .manager-header { align-items: flex-start; } }
+@media (max-width: 700px) { .manager-dashboard { padding: 24px 16px; } .manager-grid { columns: 1; } .manager-header { align-items: flex-start; } }

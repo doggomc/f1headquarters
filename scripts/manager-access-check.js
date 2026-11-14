@@ -12,7 +12,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'freef1-manager-'));
   const logs = path.join(dir, 'remote.log');
   const stub = path.join(dir, 'fetch-stub.cjs');
-  fs.writeFileSync(stub, `const fs=require('fs');const original=global.fetch;global.fetch=async (input,init)=>{const url=String(input);if(url.startsWith('https://')){fs.appendFileSync(process.env.MANAGER_FETCH_LOG,url+'\\n');if(url.includes('/admin/peaks'))return new Response(JSON.stringify({current:{total:4,pages:{home:3,cockpit:1}}}),{status:200});if(url.includes('/api/stream/auto'))return new Response(JSON.stringify({streams:[{label:'Test F1',provider:'weelo',url:'https://example.com',tag:'Weelo'}],updatedAt:1,window:{active:true}}),{status:200});return new Response('',{status:200});}return original(input,init);};`);
+  fs.writeFileSync(stub, `const fs=require('fs');const original=global.fetch;global.fetch=async (input,init)=>{const url=String(input);if(url.startsWith('https://')){await new Promise(r=>setTimeout(r,30));fs.appendFileSync(process.env.MANAGER_FETCH_LOG,url+'\\n');if(url.includes('/admin/peaks'))return new Response(JSON.stringify({current:{total:4,pages:{home:3,cockpit:1}}}),{status:200});if(url.includes('/api/stream/auto'))return new Response(JSON.stringify({streams:[{label:'Test F1',provider:'weelo',url:'https://example.com',tag:'Weelo'}],updatedAt:1,window:{active:true}}),{status:200});return new Response('',{status:200});}return original(input,init);};`);
   const store = new Map(); let storageOnline = true;
   const redis = http.createServer((req,res) => { let data=''; req.on('data',x=>data+=x); req.on('end',()=>{
     if (!storageOnline) { res.writeHead(503); return res.end(); }
@@ -41,7 +41,9 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     const [first,second]=await Promise.all([get('/manager/snapshot',manager.cookie),get('/manager/snapshot',manager.cookie)]);
     assert.equal(first.status,200);assert.equal(second.status,200);const snapshot=await first.json();assert.equal(snapshot.audience[0].current.total,4);assert.equal(snapshot.services.length,4);assert.equal(snapshot.automatic.streams[0].label,'Test F1');assert.equal('url' in snapshot.automatic.streams[0],false);
     const calls=fs.readFileSync(logs,'utf8').trim().split('\n');assert.equal(calls.length,7,'two counter, four health, one auto request, coalesced');
-    assert.equal((await get('/manager/snapshot',manager.cookie)).status,200);assert.equal(fs.readFileSync(logs,'utf8').trim().split('\n').length,7,'no extra requests inside cache window');
+    assert.equal((await get('/manager/snapshot',manager.cookie)).status,200);assert.equal(fs.readFileSync(logs,'utf8').trim().split('\n').length,14,'subsequent refresh requests fresh data');
+    for (let i=0;i<3;i++) assert.equal((await get('/manager/snapshot',manager.cookie)).status,200);
+    const limited=await get('/manager/snapshot',manager.cookie); assert.equal(limited.status,429,'excessive refreshes are bounded'); assert(limited.headers.get('retry-after'));
     assert.equal((await post('/manager-access',owner.cookie,{enabled:false})).status,200);
     assert.equal((await get('/manager/snapshot',manager.cookie)).status,401,'disabled session revoked');
     assert.equal((await login('Manager','Manager')).res.status,401,'disabled login rejected');
@@ -51,6 +53,6 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     const fresh=await login('Manager','Manager');assert.equal(fresh.res.status,200);
     storageOnline=false;assert.equal((await post('/manager-access',owner2.cookie,{enabled:false})).status,503,'failed write does not falsely report success');
     assert.equal((await get('/manager/snapshot',fresh.cookie)).status,401,'uncertain storage write fails closed');
-    console.log('Manager: read-only isolation, one-shot snapshot, coalescing, persistence and revocation passed');
+    console.log('Manager: read-only isolation, fresh snapshots, coalescing, persistence and revocation passed');
   } finally {await stop();await new Promise(r=>redis.close(r));fs.rmSync(dir,{recursive:true,force:true});}
 })().catch(error=>{console.error(error);process.exitCode=1;});

@@ -1564,8 +1564,8 @@ app.get('/admin/api/status', async (req, res) => {
 
 // The manager receives only this allowlisted aggregate; all existing admin APIs
 // below continue to require an owner session and reject manager cookies.
-let managerSnapshotCache = null;
 let managerSnapshotPending = null;
+const managerSnapshotRates = new Map();
 async function collectManagerSnapshot() {
   const defaultTargets = [
     { name: 'Main frontend', type: 'frontend', url: 'https://freef1-live.vercel.app/' },
@@ -1604,16 +1604,24 @@ app.get('/admin/api/manager/snapshot', adminSameOrigin, async (req, res) => {
   await managerReady;
   if (!isManager(req)) return res.status(401).json({ error: 'Manager access is unavailable.' });
   await stateReady;
+  // Fresh on every page reload; bound repeated requests because the manager
+  // password is intentionally public. Concurrent work is still coalesced.
+  const ip = sanitizeIp(req.ip || req.socket.remoteAddress);
+  const now = Date.now();
+  if (managerSnapshotRates.size > 2000) {
+    for (const [key, value] of managerSnapshotRates) if (value.until <= now) managerSnapshotRates.delete(key);
+    while (managerSnapshotRates.size > 2000) managerSnapshotRates.delete(managerSnapshotRates.keys().next().value);
+  }
+  let rate = managerSnapshotRates.get(ip);
+  if (!rate || rate.until <= now) { rate = { count: 0, until: now + 60000 }; managerSnapshotRates.set(ip, rate); }
+  if (rate.count >= 6) { res.setHeader('Retry-After', String(Math.ceil((rate.until - now) / 1000))); return res.status(429).json({ error: 'Too many refreshes. Please wait a moment and try again.' }); }
+  rate.count++;
   try {
-    // Coalesce concurrent requests and reuse a snapshot briefly to bound costs,
-    // including if the publicly guessable credentials are abused.
-    if (!managerSnapshotCache || Date.now() - managerSnapshotCache.capturedAt > 30000) {
-      if (!managerSnapshotPending) managerSnapshotPending = collectManagerSnapshot().then(value => { managerSnapshotCache = value; return value; }).finally(() => { managerSnapshotPending = null; });
-      await managerSnapshotPending;
-    }
+    if (!managerSnapshotPending) managerSnapshotPending = collectManagerSnapshot().finally(() => { managerSnapshotPending = null; });
+    const snapshot = await managerSnapshotPending;
     if (!isManager(req)) return res.status(401).json({ error: 'Manager access is unavailable.' });
     setNoStore(res);
-    return res.json(managerSnapshotCache);
+    return res.json(snapshot);
   } catch { return res.status(503).json({ error: 'Snapshot unavailable.' }); }
 });
 app.post('/admin/api/manager/logout', adminSameOrigin, (req, res) => {
@@ -1687,13 +1695,11 @@ app.post('/admin/api/manager-access', async (req, res) => {
     const result = await sharedStoreRequest(['SET', HQ_MANAGER_KEY, JSON.stringify(next)]);
     if (result?.result !== 'OK') throw Error('Store did not acknowledge update');
     managerSettings = next;
-    managerSnapshotCache = null;
     res.json({ success: true, enabled: next.enabled });
   } catch {
     // The write may have reached storage despite a lost response. Fail closed
     // until Headquarters reloads the authoritative setting after restart.
     managerSettings = null;
-    managerSnapshotCache = null;
     res.status(503).json({ error: 'Could not confirm the setting; manager access is temporarily closed. Restart Headquarters after storage recovers.' });
   }
 });
