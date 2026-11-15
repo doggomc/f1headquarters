@@ -18,6 +18,10 @@ if (!window.document.getElementById('loadViewerPeaks') || !source.includes("api(
   throw new Error('Audience snapshot must be available on demand');
 }
 
+const managerMark = window.document.querySelector('.manager-mark svg');
+if (!managerMark || managerMark.getAttribute('viewBox') !== '0 0 24 24' || managerMark.querySelectorAll('path').length !== 2 || managerMark.querySelector('path').getAttribute('d') !== 'M2 17.5L7.5 6.5h5.2l-2 4h4.6l-1.6 3.2H8.9l-1.7 3.8H2z') {
+  throw new Error('Manager logo must match the FreeF1 site brand mark');
+}
 const favicon = window.document.querySelector('link[rel="icon"]');
 if (!favicon || favicon.getAttribute('href') !== '/admin/favicon.svg?v=freef1' || favicon.getAttribute('type') !== 'image/svg+xml') {
   throw new Error('Admin favicon must use the bundled FreeF1 SVG');
