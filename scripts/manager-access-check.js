@@ -35,7 +35,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     const owner=await login('owner','owner-pass');assert.equal(owner.res.status,200);
     const manager=await login('Manager','Manager');assert.equal(manager.res.status,200);assert.equal((await manager.res.json()).role,'manager');
     assert.equal((await (await get('/status',manager.cookie)).json()).role,'manager');
-    for (const path of ['/config','/headquarters','/viewer-peaks','/manager-access']) assert.equal((await get(path,manager.cookie)).status,401,`${path} denied`);
+    for (const path of ['/config','/headquarters','/viewer-peaks','/manager-access','/stream/auto-test']) assert.equal((await get(path,manager.cookie)).status,401,`${path} denied`);
     for (const path of ['/manager-access','/maintenance','/stream/auto','/reset-all','/headquarters/sync']) assert.equal((await post(path,manager.cookie,{enabled:false,active:true})).status,401,`${path} denied`);
     assert.equal((await post('/stream/auto',owner.cookie,{enabled:true})).status,200);
     const [first,second]=await Promise.all([get('/manager/snapshot',manager.cookie),get('/manager/snapshot',manager.cookie)]);
