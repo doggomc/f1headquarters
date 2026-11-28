@@ -175,3 +175,14 @@ can lag session completion and published classifications can later change. Image
 are sent once, not edited after posting. A persistent per-guild results marker,
 distributed claim, and Discord nonce reduce duplicate posts on restarts or
 overlapping deployments. Like other bot state, this requires persistent storage.
+
+### Driver prediction polls
+
+The owner can run `/poll session: Qatar fp3` (also `Qatar quali` or `Qatar race`).
+The session must be in the bundled 2026 schedule. All 22 current grid drivers are
+listed in one dropdown. Everyone can vote once and change their choice; the
+message shows live totals. The owner closes voting using the poll's Close button.
+The bot stores per-poll pseudonymous voter hashes and choices to enforce one
+vote per person. Upstash keeps votes across restarts and coordinates concurrent
+bot instances; local-file storage is only as durable as the configured data directory.
+Votes are not deleted automatically. Polls remain open until manually closed.

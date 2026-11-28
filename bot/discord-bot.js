@@ -51,6 +51,7 @@ const fs = require('fs');
 const path = require('path');
 const { renderAlertImage, renderAlertsPanelImage, renderWebsiteImage } = require('./alert-image');
 const { sessionViewerPeak } = require('./session-viewer-peak');
+const polls = require('./polls');
 const { renderGridImage, gridDescription } = require('./grid-image');
 const { createResultsService, createResultsPublisher } = require('./results-service');
 const {
@@ -522,6 +523,7 @@ function start(deps) {
       return g;
     },
   };
+  const pollStore = polls.createPollStore(deps);
   const soonMinutesFor = st => Number(st.config && st.config.soonMinutes) || DEFAULT_SOON_MINUTES;
   const ticketFeatureEnabled = deps.ticketsEnabled === true && Boolean(deps.guildId && OWNER_ID);
 
@@ -1058,8 +1060,39 @@ function start(deps) {
     }
   }
 
+  async function handlePollInteraction(interaction, closing) {
+    const match = /^freef1:poll(?:-close)?:([a-f0-9]{24})$/.exec(interaction.customId || '');
+    if (!match || !interaction.guildId || !interaction.channelId || !interaction.message?.id) return;
+    if (closing && interaction.user.id !== OWNER_ID) return interaction.reply({content:'Only the owner can close a poll.',ephemeral:true});
+    await interaction.deferReply({ephemeral:true});
+    try {
+      const notice=await pollStore.locked(interaction.guildId,match[1],async (read,write)=>{
+        const poll=await read();
+        if (!poll || poll.guildId !== interaction.guildId || poll.channelId !== interaction.channelId || poll.messageId !== interaction.message.id) return 'This poll is unavailable.';
+        if (poll.closed) {
+          try { await interaction.message.edit(polls.payload(poll)); } catch (_) {}
+          return 'This poll is already closed.';
+        }
+        if (closing) poll.closed=true;
+        else {
+          const choice=interaction.values?.[0];
+          if (!poll.drivers.some(d=>d.id===choice)) return 'Invalid driver selection.';
+          const voter=polls.voterKey(poll,interaction.user.id);
+          if (!Object.hasOwn(poll.votes,voter) && Object.keys(poll.votes).length >= 10000) return 'This poll has reached its voter limit.';
+          poll.votes[voter]=choice;
+        }
+        await write(poll);
+        try { await interaction.message.edit(polls.payload(poll)); }
+        catch (error) { log('poll display update failed:',error.message); return closing?'Poll closed, but the display could not be updated.':'Vote saved, but the display could not be updated yet.'; }
+        return closing?'Poll closed.':'Your vote was saved. You can change it until the poll closes.';
+      });
+      return interaction.editReply({content:notice});
+    } catch(error) { log('poll vote failed:',error.message); return interaction.editReply({content:'Could not save your choice. Please try again.'}); }
+  }
+
   /* ── commands ── */
   const commands = [
+    { name: 'poll', description: 'Owner: create a driver prediction poll.', dm_permission: false, options: [{type:3,name:'session',description:'For example: Qatar fp3, Qatar quali, or Qatar race',required:true,max_length:100}] },
     { name: 'teammenu', description: 'Owner: post the one-team role panel in this channel.', dm_permission: false },
     { name: 'rolemenu', description: 'Owner: post the supporter-role panel (one embed, 22 driver buttons).', dm_permission: false },
     {
@@ -1113,7 +1146,9 @@ function start(deps) {
 
   /* ── interactions ── */
   async function onInteraction(interaction) {
+    if (interaction.isStringSelectMenu?.() && interaction.customId?.startsWith('freef1:poll:')) return handlePollInteraction(interaction, false);
     if (interaction.isButton()) {
+      if (interaction.customId.startsWith('freef1:poll-close:')) return handlePollInteraction(interaction, true);
       if (interaction.customId === 'freef1:alerts') return handleAlertsButton(interaction);
       if (interaction.customId.startsWith('freef1:grid:')) return handleGridButton(interaction);
       if (interaction.customId.startsWith('freef1:team:')) return handleTeamButton(interaction);
@@ -1130,6 +1165,22 @@ function start(deps) {
       if (cmd === 'website') {
         await interaction.deferReply();
         return interaction.editReply(await websitePayload(deps.siteUrl, deps.discordInvite));
+      }
+
+      if (cmd === 'poll') {
+        await interaction.deferReply({ephemeral:true});
+        const found=polls.parsePollSession(interaction.options.getString('session',true), SEASON);
+        if (!found) return interaction.editReply({content:'Session not found. Try `/poll session: Qatar fp3`, `Qatar quali`, or `Qatar race`. The session must exist in the season schedule.'});
+        if (!guild || !interaction.channel?.send) return interaction.editReply({content:'I cannot post a poll in this channel.'});
+        const poll=polls.createPoll({guildId:guild.id,channelId:interaction.channel.id,event:found.event,session:found.session,drivers:ALL_DRIVERS});
+        await pollStore.locked(guild.id,poll.id,async (_read,write)=>{
+          await write(poll);
+          const message=await interaction.channel.send(polls.payload(poll));
+          poll.messageId=message.id;
+          try { await write(poll); }
+          catch(error) { try { await message.delete(); } catch(_) {} throw error; }
+        });
+        return interaction.editReply({content:'Poll posted. Use its owner-only close button when voting should end.'});
       }
 
       if (cmd === 'test') {
