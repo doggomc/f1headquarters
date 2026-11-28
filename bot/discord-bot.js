@@ -1070,7 +1070,7 @@ function start(deps) {
         const poll=await read();
         if (!poll || poll.guildId !== interaction.guildId || poll.channelId !== interaction.channelId || poll.messageId !== interaction.message.id) return 'This poll is unavailable.';
         if (poll.closed) {
-          try { await interaction.message.edit(polls.payload(poll)); } catch (_) {}
+          try { await interaction.message.edit({...polls.payload(poll),attachments:[],embeds:[]}); } catch (_) {}
           return 'This poll is already closed.';
         }
         if (closing) poll.closed=true;
@@ -1082,7 +1082,7 @@ function start(deps) {
           poll.votes[voter]=choice;
         }
         await write(poll);
-        try { await interaction.message.edit(polls.payload(poll)); }
+        try { await interaction.message.edit({...polls.payload(poll),attachments:[],embeds:[]}); }
         catch (error) { log('poll display update failed:',error.message); return closing?'Poll closed, but the display could not be updated.':'Vote saved, but the display could not be updated yet.'; }
         return closing?'Poll closed.':'Your vote was saved. You can change it until the poll closes.';
       });
@@ -1092,6 +1092,7 @@ function start(deps) {
 
   /* ── commands ── */
   const commands = [
+    { name: 'pollclose', description: 'Owner: close a driver poll in this channel.', dm_permission: false, options: [{type:3,name:'message',description:'The poll message ID or message link',required:true,max_length:250}] },
     { name: 'poll', description: 'Owner: create a driver prediction poll.', dm_permission: false, options: [{type:3,name:'session',description:'For example: Qatar fp3, Qatar quali, or Qatar race',required:true,max_length:100}] },
     { name: 'teammenu', description: 'Owner: post the one-team role panel in this channel.', dm_permission: false },
     { name: 'rolemenu', description: 'Owner: post the supporter-role panel (one embed, 22 driver buttons).', dm_permission: false },
@@ -1167,6 +1168,30 @@ function start(deps) {
         return interaction.editReply(await websitePayload(deps.siteUrl, deps.discordInvite));
       }
 
+      if (cmd === 'pollclose') {
+        await interaction.deferReply({ephemeral:true});
+        const input=String(interaction.options.getString('message',true) || '').trim();
+        const id=/^\d{17,20}$/.test(input) ? input : input.match(/^https:\/\/(?:www\.|ptb\.|canary\.)?discord(?:app)?\.com\/channels\/\d{17,20}\/\d{17,20}\/(\d{17,20})\/?$/)?.[1];
+        if (!id || !guild || !interaction.channel?.messages?.fetch) return interaction.editReply({content:'Provide the poll message ID or link in the same channel.'});
+        let message;
+        try { message=await interaction.channel.messages.fetch(id); } catch (_) { return interaction.editReply({content:'Poll message not found in this channel.'}); }
+        const customId=message.components?.flatMap(row=>row.components || []).map(component=>component.customId || component.custom_id).find(value=>/^freef1:poll:[a-f0-9]{24}$/.test(value || ''));
+        if (!customId) return interaction.editReply({content:'That message is not a FreeF1 driver poll.'});
+        const pollId=customId.slice('freef1:poll:'.length);
+        try {
+          const notice=await pollStore.locked(guild.id,pollId,async(read,write)=>{
+            const poll=await read();
+            if (!poll || poll.guildId !== guild.id || poll.channelId !== interaction.channel.id || poll.messageId !== message.id) return 'This poll is unavailable.';
+            const wasClosed=poll.closed;poll.closed=true;
+            if (!wasClosed) await write(poll);
+            try { await message.edit({...polls.payload(poll),attachments:[],embeds:[]}); }
+            catch(error) { log('poll close display update failed:',error.message);return 'Poll is closed, but its image could not be updated. Run the command again to retry.'; }
+            return wasClosed?'Poll was already closed; its image has been refreshed.':'Poll closed.';
+          });
+          return interaction.editReply({content:notice});
+        } catch(error) { log('poll close failed:',error.message); return interaction.editReply({content:'Could not close the poll. Please try again.'}); }
+      }
+
       if (cmd === 'poll') {
         await interaction.deferReply({ephemeral:true});
         const found=polls.parsePollSession(interaction.options.getString('session',true), SEASON);
@@ -1180,7 +1205,7 @@ function start(deps) {
           try { await write(poll); }
           catch(error) { try { await message.delete(); } catch(_) {} throw error; }
         });
-        return interaction.editReply({content:'Poll posted. Use its owner-only close button when voting should end.'});
+        return interaction.editReply({content:'Poll posted. Close it with /pollclose and the poll message ID or link.'});
       }
 
       if (cmd === 'test') {

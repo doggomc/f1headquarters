@@ -181,7 +181,7 @@ overlapping deployments. Like other bot state, this requires persistent storage.
 The owner can run `/poll session: Qatar fp3` (also `Qatar quali` or `Qatar race`).
 The session must be in the bundled 2026 schedule. All 22 current grid drivers are
 listed in one dropdown. Everyone can vote once and change their choice; the
-message shows live totals. The owner closes voting using the poll's Close button.
+message shows live totals. The owner closes voting with `/pollclose message: MESSAGE_ID` or a message link in the same channel. The poll uses a live-updating image and a dropdown (not a native Discord poll).
 The bot stores per-poll pseudonymous voter hashes and choices to enforce one
 vote per person. Upstash keeps votes across restarts and coordinates concurrent
 bot instances; local-file storage is only as durable as the configured data directory.

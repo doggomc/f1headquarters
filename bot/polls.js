@@ -1,7 +1,8 @@
 'use strict';
 const crypto = require('node:crypto');
-const { ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { ActionRowBuilder, StringSelectMenuBuilder } = require('discord.js');
 const { NAMES } = require('./grid-image');
+const { renderPollImage } = require('./poll-image');
 const LABELS = {fp1:'Practice 1',fp2:'Practice 2',fp3:'Practice 3',qualifying:'Qualifying',race:'Race',sprint:'Sprint','sprint-qualifying':'Sprint Qualifying'};
 function parsePollSession(input, season) {
   let text=String(input || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,' ').trim();
@@ -32,20 +33,22 @@ function createPoll({guildId,channelId,event,session,drivers}) {
 function payload(poll) {
   const counts=Object.create(null);for(const id of Object.values(poll.votes || {})) counts[id]=(counts[id]||0)+1;
   const total=Object.values(counts).reduce((a,b)=>a+b,0);
-  const lines=poll.drivers.map(d=>`**${d.name}** · ${counts[d.id] || 0}`).join('\n');
   const select = new StringSelectMenuBuilder().setCustomId(`freef1:poll:${poll.id}`).setPlaceholder(poll.closed?'Voting is closed':'Choose a driver · you can change your vote').setMinValues(1).setMaxValues(1).setDisabled(poll.closed).addOptions(poll.drivers.map(d=>({label:`${d.name} · ${d.team}`.slice(0,100),value:d.id})));
-  const close=new ButtonBuilder().setCustomId(`freef1:poll-close:${poll.id}`).setLabel(poll.closed?'Poll closed':'Close poll · Owner').setStyle(ButtonStyle.Secondary).setDisabled(poll.closed);
-  return {embeds:[{color:poll.closed?0x808080:0xe10600,title:poll.question,description:`**${poll.event} · ${poll.session}**\n${poll.closed?'Voting closed':'Voting open · choose one driver'}\n\n${lines}`,footer:{text:`${total} ${total===1?'vote':'votes'} · ${poll.closed?'Final results':'Live results · you may change your vote'}`}}],components:[new ActionRowBuilder().addComponents(select),new ActionRowBuilder().addComponents(close)],allowedMentions:{parse:[]}};
+  const description = `${poll.question} ${poll.event}, ${poll.session}. ${poll.closed?'Voting closed.':'Voting open.'} ${poll.drivers.map(d=>`${d.name}: ${counts[d.id]||0}`).join('; ')}. Total: ${total} votes.`.slice(0,1024);
+  return {files:[{attachment:renderPollImage(poll),name:'freef1-poll.png',description}],components:[new ActionRowBuilder().addComponents(select)],allowedMentions:{parse:[]}};
 }
-function createPollStore({upstash,redisKey='freef1:discordbot:v1',fileKey,readLocalJson,writeLocalJson}) {
+function createPollStore({upstash,redisKey='freef1:discordbot:v1',fileKey,readLocalJson,writeLocalJson,pollLockWaitMs=5000}) {
   const active=new Set(), localFile=fileKey ? `${fileKey}.polls.json` : '';
   const key=(guild,id)=>`${redisKey}:poll:v1:${guild}:${id}`;
   async function locked(guild,id,fn) {
     const k=key(guild,id), lock=k+':lock', token=crypto.randomBytes(16).toString('hex');
-    if(active.has(k)) throw Error('This poll is busy; please try again.');
+    const deadline=Date.now()+Math.max(0,Math.min(10000,pollLockWaitMs));
+    while(active.has(k)) { if(Date.now()>=deadline) throw Error('This poll is busy; please try again.'); await new Promise(resolve=>setTimeout(resolve,100)); }
     active.add(k);let claimed=false;
     try {
-      if(upstash){const reply=await upstash(['SET',lock,token,'NX','EX','30']);if(reply?.result!=='OK')throw Error('This poll is busy; please try again.');claimed=true;}
+      if(upstash){
+        while(true){const reply=await upstash(['SET',lock,token,'NX','EX','30']);if(reply?.result==='OK'){claimed=true;break;}if(Date.now()>=deadline)throw Error('This poll is busy; please try again.');await new Promise(resolve=>setTimeout(resolve,100));}
+      }
       const read=async()=>{if(upstash){const r=await upstash(['GET',k]);if(r?.result==null)return null;return JSON.parse(r.result);}if(!localFile||!readLocalJson)throw Error('Poll storage is not configured');return (readLocalJson(localFile)||{})[k]||null;};
       const write=async p=>{if(upstash){const r=await upstash(['SET',k,JSON.stringify(p)]);if(r?.result!=='OK')throw Error('Poll storage did not confirm the save');}else{if(!localFile||!writeLocalJson)throw Error('Poll storage is not configured');const all=readLocalJson(localFile)||{};all[k]=p;if(writeLocalJson(localFile,all)===false)throw Error('Poll storage did not confirm the save');}};
       return await fn(read,write);
