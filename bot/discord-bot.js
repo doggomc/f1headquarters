@@ -1060,6 +1060,23 @@ function start(deps) {
     }
   }
 
+  async function closePredictionPoll(poll, message, channel, write) {
+    if (!poll.closed) { poll.closed=true; await write(poll); }
+    let imageUpdated=true;
+    try { await message.edit({...polls.payload(poll),attachments:[],embeds:[]}); }
+    catch(error) { imageUpdated=false; log('poll close display update failed:',error.message); }
+    const announcements=polls.resultPayloads(poll);
+    if (!Array.isArray(poll.resultMessageIds)) poll.resultMessageIds=[];
+    for (let i=0;i<announcements.length;i++) {
+      if (poll.resultMessageIds[i]) continue;
+      const nonce=require('node:crypto').createHash('sha256').update(`freef1:poll-result:${poll.guildId}:${poll.id}:${i}`).digest('hex').slice(0,24);
+      const result=await channel.send({...announcements[i],nonce,enforceNonce:true});
+      poll.resultMessageIds[i]=result.id;
+      await write(poll);
+    }
+    return imageUpdated ? 'Poll closed and the result announced.' : 'Poll closed and the result announced, but its original image could not be updated. Run /pollclose again to retry.';
+  }
+
   async function handlePollInteraction(interaction, closing) {
     const match = /^freef1:poll(?:-close)?:([a-f0-9]{24})$/.exec(interaction.customId || '');
     if (!match || !interaction.guildId || !interaction.channelId || !interaction.message?.id) return;
@@ -1069,25 +1086,23 @@ function start(deps) {
       const notice=await pollStore.locked(interaction.guildId,match[1],async (read,write)=>{
         const poll=await read();
         if (!poll || poll.guildId !== interaction.guildId || poll.channelId !== interaction.channelId || poll.messageId !== interaction.message.id) return 'This poll is unavailable.';
-        if (poll.closed) {
-          try { await interaction.message.edit({...polls.payload(poll),attachments:[],embeds:[]}); } catch (_) {}
-          return 'This poll is already closed.';
-        }
-        if (closing) poll.closed=true;
-        else {
-          const choice=interaction.values?.[0];
-          if (!poll.drivers.some(d=>d.id===choice)) return 'Invalid driver selection.';
-          const voter=polls.voterKey(poll,interaction.user.id);
-          if (!Object.hasOwn(poll.votes,voter) && Object.keys(poll.votes).length >= 10000) return 'This poll has reached its voter limit.';
-          poll.votes[voter]=choice;
-        }
+        if (closing) return closePredictionPoll(poll,interaction.message,interaction.channel,write);
+        if (poll.closed) return 'This poll is already closed.';
+        const choice=interaction.values?.[0];
+        if (!poll.drivers.some(d=>d.id===choice)) return 'Invalid driver selection.';
+        const voter=polls.voterKey(poll,interaction.user.id);
+        if (!Object.hasOwn(poll.votes,voter) && Object.keys(poll.votes).length >= 10000) return 'This poll has reached its voter limit.';
+        poll.votes[voter]=choice;
         await write(poll);
-        try { await interaction.message.edit({...polls.payload(poll),attachments:[],embeds:[]}); }
-        catch (error) { log('poll display update failed:',error.message); return closing?'Poll closed, but the display could not be updated.':'Vote saved, but the display could not be updated yet.'; }
-        return closing?'Poll closed.':'Your vote was saved. You can change it until the poll closes.';
+        // Migrate a legacy live-tally image on its first interaction only.
+        if (!poll.hiddenDesignVersion) {
+          try { await interaction.message.edit({...polls.payload(poll),attachments:[],embeds:[]}); poll.hiddenDesignVersion=1; await write(poll); }
+          catch(error) { log('legacy poll image update failed:',error.message); }
+        }
+        return 'Your vote was saved. You can change it until the poll closes.';
       });
       return interaction.editReply({content:notice});
-    } catch(error) { log('poll vote failed:',error.message); return interaction.editReply({content:'Could not save your choice. Please try again.'}); }
+    } catch(error) { log('poll vote failed:',error.message); return interaction.editReply({content:closing?'Could not announce the result. Run /pollclose again to retry.':'Could not save your choice. Please try again.'}); }
   }
 
   /* ── commands ── */
@@ -1182,14 +1197,10 @@ function start(deps) {
           const notice=await pollStore.locked(guild.id,pollId,async(read,write)=>{
             const poll=await read();
             if (!poll || poll.guildId !== guild.id || poll.channelId !== interaction.channel.id || poll.messageId !== message.id) return 'This poll is unavailable.';
-            const wasClosed=poll.closed;poll.closed=true;
-            if (!wasClosed) await write(poll);
-            try { await message.edit({...polls.payload(poll),attachments:[],embeds:[]}); }
-            catch(error) { log('poll close display update failed:',error.message);return 'Poll is closed, but its image could not be updated. Run the command again to retry.'; }
-            return wasClosed?'Poll was already closed; its image has been refreshed.':'Poll closed.';
+            return closePredictionPoll(poll,message,interaction.channel,write);
           });
           return interaction.editReply({content:notice});
-        } catch(error) { log('poll close failed:',error.message); return interaction.editReply({content:'Could not close the poll. Please try again.'}); }
+        } catch(error) { log('poll close failed:',error.message); return interaction.editReply({content:'Could not announce the result. Run /pollclose again to retry.'}); }
       }
 
       if (cmd === 'poll') {

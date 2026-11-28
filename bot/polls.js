@@ -2,6 +2,8 @@
 const crypto = require('node:crypto');
 const { ActionRowBuilder, StringSelectMenuBuilder } = require('discord.js');
 const { NAMES } = require('./grid-image');
+const path = require('node:path');
+const fs = require('node:fs');
 const { renderPollImage } = require('./poll-image');
 const LABELS = {fp1:'Practice 1',fp2:'Practice 2',fp3:'Practice 3',qualifying:'Qualifying',race:'Race',sprint:'Sprint','sprint-qualifying':'Sprint Qualifying'};
 function parsePollSession(input, season) {
@@ -28,14 +30,32 @@ function question(session) {
   return 'Who will win the race?';
 }
 function createPoll({guildId,channelId,event,session,drivers}) {
-  return {id:crypto.randomBytes(12).toString('hex'),guildId:String(guildId),channelId:String(channelId),messageId:'',event:String(event.name).slice(0,100),session:String(session.name).slice(0,80),question:question(session),drivers:drivers.map(d=>({id:String(d.num),name:NAMES[d.code] || d.code,team:d.team})),votes:{},closed:false,createdAt:Date.now()};
+  return {id:crypto.randomBytes(12).toString('hex'),guildId:String(guildId),channelId:String(channelId),messageId:'',event:String(event.name).slice(0,100),session:String(session.name).slice(0,80),question:question(session),drivers:drivers.map(d=>({id:String(d.num),name:NAMES[d.code] || d.code,team:d.team})),votes:{},closed:false,hiddenDesignVersion:1,createdAt:Date.now()};
 }
 function payload(poll) {
-  const counts=Object.create(null);for(const id of Object.values(poll.votes || {})) counts[id]=(counts[id]||0)+1;
-  const total=Object.values(counts).reduce((a,b)=>a+b,0);
   const select = new StringSelectMenuBuilder().setCustomId(`freef1:poll:${poll.id}`).setPlaceholder(poll.closed?'Voting is closed':'Choose a driver · you can change your vote').setMinValues(1).setMaxValues(1).setDisabled(poll.closed).addOptions(poll.drivers.map(d=>({label:`${d.name} · ${d.team}`.slice(0,100),value:d.id})));
-  const description = `${poll.question} ${poll.event}, ${poll.session}. ${poll.closed?'Voting closed.':'Voting open.'} ${poll.drivers.map(d=>`${d.name}: ${counts[d.id]||0}`).join('; ')}. Total: ${total} votes.`.slice(0,1024);
+  const description = `${poll.question} ${poll.event}, ${poll.session}. ${poll.closed?'Voting closed.':'Voting open; vote totals are hidden.'} Drivers: ${poll.drivers.map(d=>d.name).join(', ')}.`.slice(0,1024);
   return {files:[{attachment:renderPollImage(poll),name:'freef1-poll.png',description}],components:[new ActionRowBuilder().addComponents(select)],allowedMentions:{parse:[]}};
+}
+function winningDrivers(poll) {
+  const counts=Object.create(null);
+  const known=new Set(poll.drivers.map(d=>d.id));
+  for(const id of Object.values(poll.votes||{})) if(known.has(id)) counts[id]=(counts[id]||0)+1;
+  const max=Math.max(0,...Object.values(counts));
+  return {winners:max ? poll.drivers.filter(d=>counts[d.id]===max) : [],votes:max};
+}
+function resultPayloads(poll) {
+  const {winners,votes}=winningDrivers(poll);
+  const prefix=`${poll.event} · ${poll.session}`;
+  if(!winners.length) return [{content:`**Poll closed · ${prefix}**\nNo votes were cast, so there is no winning prediction.`,allowedMentions:{parse:[]}}];
+  const reverse=Object.fromEntries(Object.entries(NAMES).map(([code,name])=>[name,code]));
+  const groups=[];for(let i=0;i<winners.length;i+=10) groups.push(winners.slice(i,i+10));
+  return groups.map((drivers,i)=>{
+    const names=drivers.map(d=>d.name).join(', ');
+    const title=winners.length===1?'Winning prediction':`Tied winning predictions${groups.length>1?` (${i+1}/${groups.length})`:''}`;
+    const files=drivers.flatMap(d=>{const code=reverse[d.name];if(!code||!/^[A-Z]{3}$/.test(code))return [];const file=path.join(__dirname,'..','assets','poll-drivers',`${code}.webp`);return fs.existsSync(file)?[{attachment:fs.readFileSync(file),name:`${code.toLowerCase()}.webp`,description:`${d.name} · ${d.team}`}]:[];});
+    return {content:`**${title} · ${prefix}**\n${names} · ${votes} ${votes===1?'vote':'votes'}${winners.length>1?' each':''}`,files,allowedMentions:{parse:[]}};
+  });
 }
 function createPollStore({upstash,redisKey='freef1:discordbot:v1',fileKey,readLocalJson,writeLocalJson,pollLockWaitMs=5000}) {
   const active=new Set(), localFile=fileKey ? `${fileKey}.polls.json` : '';
@@ -60,4 +80,4 @@ function createPollStore({upstash,redisKey='freef1:discordbot:v1',fileKey,readLo
   return {locked};
 }
 function voterKey(poll,userId) {return crypto.createHash('sha256').update(`${poll.id}:${poll.guildId}:${userId}`).digest('hex');}
-module.exports={parsePollSession,question,createPoll,payload,createPollStore,voterKey};
+module.exports={parsePollSession,question,createPoll,payload,winningDrivers,resultPayloads,createPollStore,voterKey};
